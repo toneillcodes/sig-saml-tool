@@ -1,5 +1,5 @@
 # sig-saml-tool
-SAML management and configuration can be tedious and repetitive.
+SAML SP management and configuration can be tedious and repetitive.
 With more schools transitioning from CAS to SAML, it was time to finish up a tool that was started a long time ago.
 
 This repo contains a bash script called 'samltool.sh' and its main purpose (for now) is to prompt the user for the information that it 
