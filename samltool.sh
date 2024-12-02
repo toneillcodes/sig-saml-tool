@@ -1,25 +1,111 @@
 #!/bin/bash
+
 echo "--------------------------------------------"
 echo "█▀ █ █▀▀   █▀ ▄▀█ █▀▄▀█ █    ▀█▀ █▀█ █▀█ █  "
 echo "▄█ █ █▄█   ▄█ █▀█ █ ▀ █ █▄▄   █  █▄█ █▄█ █▄▄"
 echo "--------------------------------------------"
-echo "version 1.0"
+echo "version 2.0"
 echo ""
 
 export timestamp=`date +"%Y%m%d-%H%M%S"`
+export host=""
+export context=""
+export entityid=""
+export spid=""
+export gencert=""
 
-echo "[*] Collecting environment information"
-read -p "- Enter hostname: " host
-#echo "User entered: ${host}"
+function printhelp() {
+        echo "Usage: $0 [-h] [-v] [-m mode] [-f filename]"
+}
 
-read -p "- Enter context path: " context
-#echo "User entered: ${context}"
+if [ $# -eq 0 ]; then
+        printhelp
+        exit 1
+fi
 
-read -p "- Enter entity ID (suggested value='https://${host}/${context}'): " entityid
-#echo "User entered: ${entityid}"
+while getopts "hvm:u:e:i:o:k:p:a:d:f:" option; do
+  case $option in
+    h) # display help message
+      printhelp
+      exit 0
+      ;;
+    v) # enable verbose mode
+      VERBOSE=1
+      ;;
+    m) # mode
+      MODE="$OPTARG"
+      ;;
+    f) # set filename
+      FILENAME="$OPTARG"
+      ;;
+    \?) # invalid option
+      echo "Invalid option: -$OPTARG" >&2
+      exit 1
+      ;;
+  esac
+done
 
-read -p "- Enter ID: " spid
-#echo "User entered: ${spid}"
+function readcsv() {
+        # Read the file line by line
+        while IFS=, read -r url spentityid spid keystorepath keystorepass spkeyalias certdata
+        do
+                # Process each field as needed
+                echo "url: $url"
+                echo "spentityid: $spentityid"
+                echo "spid: $spid"
+                echo "keystorepath: $keystorepath"
+                echo "keystorepass: $keystorepass"
+                echo "spkeyalias: $spkeyalias"
+                echo "certdata: $certdata"
+        done < "$FILENAME"
+}
+
+function doprompts() {
+        echo "[*] Collecting environment information"
+        read -p "- Enter hostname (include port if not using 443): " host
+        #echo "User entered: ${host}"
+
+        read -p "- Enter context path: " context
+        #echo "User entered: ${context}"
+
+        read -p "- Enter entity ID (suggested value='https://${host}/${context}'): " entityid
+        #echo "User entered: ${entityid}"
+
+        read -p "- Enter ID: " spid
+        #echo "User entered: ${spid}"
+
+        while true; do
+                read -p "[*] Do you need to generate a certificate? (Y/N) " gencert
+                #echo "User entered: ${gencert}"
+
+                if [[ "$gencert" == "Y" || "$gencert" == "y" ]]; then
+                        $GENCERT="Y"    # normalize input
+                        break
+                elif [[ "$gencert" == "N" || "$gencert" == "n" ]]; then
+                        $GENCERT="N"    # normalize input
+                        break
+                else
+                        echo "Invalid input. Please enter Y or N."
+                fi
+        done
+}
+
+if [ $MODE == "prompt" ]; then
+        echo "Prompt mode selected"
+        doprompts
+        echo "hostname = ${host}"
+elif [ $MODE == "file" ]; then
+        if [ -z "$FILENAME" ]; then
+                echo "ERROR: Please provide a file using -f"
+                exit 1
+        else
+                echo "Reading from file: $FILENAME"
+                readcsv
+        fi
+else
+        echo "ERROR: Unrecognized mode option, valid values: prompt, file"
+        exit 1
+fi
 
 echo "[*] Creating working directory (working-directory-${timestamp})"
 mkdir working-directory-${timestamp}
@@ -27,63 +113,4 @@ mkdir working-directory-${timestamp}
 echo "[*] Copying SP metadata template"
 cp sp-metadata-template.xml working-directory-${timestamp}/sp-metadata.xml
 
-cd working-directory-${timestamp}
-
-read -p "[*] Do you need to generate a certificate? (Y/N) " gencert
-#echo "User entered: ${gencert}"
-
-if [[ $gencert == "Y" || $gencert == "y" ]]; then
-        echo "[*] Generating keystore..."
-
-        read -p "- Enter cert data: " certdata
-        #echo "User entered: ${certdata}"
-
-        keytool -genkeypair -keyalg RSA -alias samlsigning -dname "${certdata}" -validity 1825 -keysize 2048 -sigalg SHA256withRSA -keystore samlKeystore.jks
-
-        echo "[*] Exporting public certificate..."
-        keytool -export -alias samlsigning -keystore samlKeystore.jks -rfc -file saml-signing.crt
-
-elif [[ $gencert == "N" || $gencert == "n" ]] ; then
-        echo "[*] Prompting for keystore details..."
-        read -p "- Enter keystore path: " keystore
-        #echo "User entered: ${keystore}"
-
-        read -p "- Enter key alias: " keyalias
-        #echo "User entered: ${keyalias}"
-
-        echo "[*] Exporting public certificate..."
-        keytool -export -alias ${keyalias} -keystore $keystore -rfc -file saml-signing.crt
-else
-  echo "[!] ERROR: Invalid keystore option, exiting"
-  exit 2
-fi
-
-#cat saml-signing.crt
-#echo "SAML certificate contents = `cat saml-signing.crt`"
-
-echo "- Cleaning up and formatting cert"
-certbody=`cat saml-signing.crt | tail -n +2 | head -n -1`
-
-#echo "Cert body = ${certbody}"
-
-# Dump certificat to a temp file
-echo "${certbody}" > saml-signing-temp.crt
-# Fix newline character encoding
-dos2unix saml-signing-temp.crt
-# Remove newline characters
-tr -d '\n' < saml-signing-temp.crt > saml-signing-flat.crt
-flattenedcert=`cat saml-signing-flat.crt`
-
-echo "[*] Updating SP metadata..."
-echo "- Updating entity id"
-sed -i "s|<ENTITYID>|${entityid}|g" sp-metadata.xml
-echo "- Updating id"
-sed -i "s|<SPID>|${spid}|g" sp-metadata.xml
-echo "- Updating certificate"
-#echo "Flattened cert = ${flattenedcert}"
-sed -i "s|<CERTBODY>|${flattenedcert}|g" sp-metadata.xml
-echo "- Updating host"
-sed -i "s|<HOST>|${host}|g" sp-metadata.xml
-echo "- Updating context"
-sed -i "s|<CONTEXT>|${context}|g" sp-metadata.xml
-echo "[*] Done."
+#cd working-directory-${timestamp}
